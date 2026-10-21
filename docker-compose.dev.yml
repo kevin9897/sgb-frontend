@@ -1,0 +1,14 @@
+# Docker Compose modo DESARROLLO - Repositorio Frontend (Vite HMR)
+services:
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: sgb_frontend_dev
+    environment:
+      VITE_API_URL: ${VITE_API_URL:-http://localhost:8000/api/v1}
+    ports:
+      - "5173:5173"
+    volumes:
+      - .:/app
+      - /app/node_modules

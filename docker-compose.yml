@@ -1,0 +1,9 @@
+# Docker Compose por defecto del repositorio Frontend
+services:
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+    container_name: sgb_frontend
+    ports:
+      - "5173:80"
