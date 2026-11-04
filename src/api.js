@@ -5,12 +5,29 @@ const api = axios.create({
 });
 
 export const getHealth = () => api.get("/health").then((r) => r.data);
-export const getRecursos = (coleccion) =>
-  api.get("/recursos", { params: coleccion ? { coleccion } : {} }).then((r) => r.data);
+export const ejecutarSeed = () => api.post("/seed").then((r) => r.data);
+export const getRecursos = (coleccion, q) =>
+  api
+    .get("/recursos", {
+      params: {
+        ...(coleccion ? { coleccion } : {}),
+        ...(q ? { q } : {}),
+      },
+    })
+    .then((r) => r.data);
+export const crearRecurso = (payload) => api.post("/recursos", payload).then((r) => r.data);
 export const darDeBajaRecurso = (codigo, payload) =>
   api.post(`/recursos/${codigo}/baja`, payload).then((r) => r.data);
-export const getUsuarios = (rol) =>
-  api.get("/usuarios", { params: rol ? { rol } : {} }).then((r) => r.data);
+export const getUsuarios = (rol, q) =>
+  api
+    .get("/usuarios", {
+      params: {
+        ...(rol ? { rol } : {}),
+        ...(q ? { q } : {}),
+      },
+    })
+    .then((r) => r.data);
+export const crearUsuario = (payload) => api.post("/usuarios", payload).then((r) => r.data);
 export const getPrestamos = () => api.get("/prestamos").then((r) => r.data);
 export const getRenovaciones = () => api.get("/prestamos/renovaciones").then((r) => r.data);
 export const crearPrestamo = (payload) => api.post("/prestamos", payload).then((r) => r.data);

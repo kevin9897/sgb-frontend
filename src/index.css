@@ -235,6 +235,16 @@ input:focus, select:focus { outline: 1px solid var(--accent); border-color: var(
 .search-input { min-width: 280px; flex: 1; max-width: 420px; }
 .toolbar-meta { font-size: 0.78rem; color: var(--muted); }
 
+.subform {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  align-items: flex-end;
+  padding: 0.85rem 0.9rem;
+  background: #f3f3ee;
+  border-bottom: 1px solid var(--line);
+}
+
 .table-wrap { overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; }
 th, td {

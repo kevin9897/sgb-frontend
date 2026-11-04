@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   crearPrestamo,
+  crearRecurso,
   crearReserva,
+  crearUsuario,
   darDeBajaRecurso,
   devolverPrestamo,
+  ejecutarSeed,
   getHealth,
   getMultas,
   getPrestamos,
@@ -32,6 +35,7 @@ export default function App() {
   const [coleccion, setColeccion] = useState("");
   const [busqueda, setBusqueda] = useState("");
   const [filtroRol, setFiltroRol] = useState("");
+  const [busquedaUsuario, setBusquedaUsuario] = useState("");
 
   const [recursos, setRecursos] = useState([]);
   const [usuarios, setUsuarios] = useState([]);
@@ -41,10 +45,41 @@ export default function App() {
   const [multas, setMultas] = useState([]);
   const [aviso, setAviso] = useState(null);
 
+  const [mostrarFormRecurso, setMostrarFormRecurso] = useState(false);
+  const [mostrarFormUsuario, setMostrarFormUsuario] = useState(false);
+
   const [form, setForm] = useState({
     identificacion_usuario: "10000001",
     codigo_recurso: "GEN-001",
     identificacion_bibliotecario: "30000001",
+  });
+
+  const [nuevoRecurso, setNuevoRecurso] = useState({
+    codigo_recurso: "GEN-021",
+    coleccion: "GENERAL",
+    titulo: "",
+    isbn_issn: "978-958-00-0021-1",
+    autores: "",
+    editorial: "Madeira Press",
+    idioma: "Español",
+    numero_paginas: 300,
+    ancho: 15,
+    alto: 23,
+    profundidad: 2.5,
+    unidad_dimension: "cm",
+    tipo_encuadernacion: "Tapa blanda",
+    cantidad_ejemplares: 5,
+  });
+
+  const [nuevoUsuario, setNuevoUsuario] = useState({
+    identificacion: "",
+    codigo: "",
+    nombres: "",
+    apellidos: "",
+    correo_institucional: "",
+    plan: "Ingeniería de Software",
+    semestre: 5,
+    rol: "ESTUDIANTE",
   });
 
   const sincronizar = async (col = coleccion) => {
@@ -87,8 +122,72 @@ export default function App() {
   }, [recursos, busqueda]);
 
   const usuariosFiltrados = useMemo(() => {
-    return usuarios.filter((u) => (!filtroRol || u.rol === filtroRol));
-  }, [usuarios, filtroRol]);
+    const q = busquedaUsuario.trim().toLowerCase();
+    return usuarios.filter((u) => {
+      const coincideRol = !filtroRol || u.rol === filtroRol;
+      const coincideTexto =
+        !q ||
+        u.identificacion.toLowerCase().includes(q) ||
+        (u.codigo && u.codigo.toLowerCase().includes(q)) ||
+        `${u.nombres} ${u.apellidos}`.toLowerCase().includes(q) ||
+        u.correo_institucional.toLowerCase().includes(q);
+      return coincideRol && coincideTexto;
+    });
+  }, [usuarios, filtroRol, busquedaUsuario]);
+
+  const handleCrearRecurso = async (e) => {
+    e.preventDefault();
+    setAviso(null);
+    try {
+      const creado = await crearRecurso({
+        ...nuevoRecurso,
+        numero_paginas: Number(nuevoRecurso.numero_paginas) || null,
+        cantidad_ejemplares: Number(nuevoRecurso.cantidad_ejemplares) || 1,
+      });
+      setAviso({
+        tipo: "ok",
+        texto: `Recurso ${creado.codigo_recurso} (${creado.titulo}) guardado en Supabase PostgreSQL.`,
+      });
+      setMostrarFormRecurso(false);
+      sincronizar();
+    } catch (err) {
+      setAviso({ tipo: "error", texto: err.response?.data?.detail || err.message });
+    }
+  };
+
+  const handleCrearUsuario = async (e) => {
+    e.preventDefault();
+    setAviso(null);
+    try {
+      const payload = {
+        ...nuevoUsuario,
+        codigo: nuevoUsuario.rol === "ESTUDIANTE" ? nuevoUsuario.codigo : null,
+        semestre: nuevoUsuario.rol === "ESTUDIANTE" ? Number(nuevoUsuario.semestre) : null,
+      };
+      const creado = await crearUsuario(payload);
+      setAviso({
+        tipo: "ok",
+        texto: `Usuario ${creado.nombres} ${creado.apellidos} (${creado.rol}) registrado en Supabase PostgreSQL.`,
+      });
+      setMostrarFormUsuario(false);
+      sincronizar();
+    } catch (err) {
+      setAviso({ tipo: "error", texto: err.response?.data?.detail || err.message });
+    }
+  };
+
+  const handleVerificarSeed = async () => {
+    try {
+      const r = await ejecutarSeed();
+      setAviso({
+        tipo: "ok",
+        texto: `${r.mensaje}: ${r.usuarios} usuarios y ${r.recursos} recursos activos.`,
+      });
+      sincronizar();
+    } catch (err) {
+      setAviso({ tipo: "error", texto: err.response?.data?.detail || err.message });
+    }
+  };
 
   const ejecutarPrestamo = async (e) => {
     e.preventDefault();
@@ -184,11 +283,15 @@ export default function App() {
           </div>
         </div>
 
-        <div className="nav-section">MÓDULOS OPERATIVOS</div>
+        <div className="nav-section">MÓDULOS SPRINT 1 & CIRCULACIÓN</div>
         <nav className="side-nav">
           <button className={vista === "catalogo" ? "active" : ""} onClick={() => setVista("catalogo")}>
             <span>Inventario y Colecciones</span>
             <span className="count">{recursos.length}</span>
+          </button>
+          <button className={vista === "usuarios" ? "active" : ""} onClick={() => setVista("usuarios")}>
+            <span>Padrón de Usuarios</span>
+            <span className="count">{usuarios.length}</span>
           </button>
           <button className={vista === "circulacion" ? "active" : ""} onClick={() => setVista("circulacion")}>
             <span>Circulación y Préstamos</span>
@@ -206,10 +309,6 @@ export default function App() {
             <span>Control de Multas</span>
             <span className="count">{multas.length}</span>
           </button>
-          <button className={vista === "usuarios" ? "active" : ""} onClick={() => setVista("usuarios")}>
-            <span>Padrón de Usuarios</span>
-            <span className="count">{usuarios.length}</span>
-          </button>
         </nav>
 
         <div className="sidebar-footer">
@@ -218,7 +317,7 @@ export default function App() {
             <span className={health ? "dot-ok" : "dot-err"}>{health ? "En línea" : "Sin conexión"}</span>
           </div>
           <div className="sys-row">
-            <span>Motor PostgreSQL</span>
+            <span>Base de Datos</span>
             <span className="mono">{health ? health.database : "pendiente"}</span>
           </div>
           <div className="sys-row">
@@ -240,7 +339,7 @@ export default function App() {
               {vista === "usuarios" && "Directorio Institucional de Usuarios"}
             </h1>
             <p className="breadcrumb">
-              Biblioteca Central · Mostrador de Circulación · Operador activo: Bibliotecario{" "}
+              Biblioteca Central · Conectado a <strong>{health?.database || "Supabase PostgreSQL"}</strong> · Operador:{" "}
               <span className="mono">{form.identificacion_bibliotecario}</span>
             </p>
           </div>
@@ -251,16 +350,16 @@ export default function App() {
               <strong>{recursos.filter((r) => r.estado === "DISPONIBLE").length}</strong>
             </div>
             <div>
+              <span className="lbl">USUARIOS BD</span>
+              <strong>{usuarios.length}</strong>
+            </div>
+            <div>
               <span className="lbl">PRÉSTAMOS ACTIVOS</span>
               <strong>{prestamos.filter((p) => p.activo).length}</strong>
             </div>
             <div>
               <span className="lbl">RESERVAS</span>
               <strong>{reservas.length}</strong>
-            </div>
-            <div>
-              <span className="lbl">MULTAS PEND.</span>
-              <strong>{multas.filter((m) => !m.pagada).length}</strong>
             </div>
           </div>
         </header>
@@ -297,6 +396,9 @@ export default function App() {
               <button type="button" className="btn-outline" onClick={ejecutarReserva}>
                 Encolar Reserva
               </button>
+              <button type="button" className="btn-outline" onClick={handleVerificarSeed}>
+                Verificar Seed Data
+              </button>
             </div>
           </form>
         </section>
@@ -324,15 +426,78 @@ export default function App() {
                   <input
                     type="search"
                     className="search-input"
-                    placeholder="Filtrar por código, título, autor o ISBN/ISSN..."
+                    placeholder="Buscar por código, título, autor o ISBN/ISSN..."
                     value={busqueda}
                     onChange={(e) => setBusqueda(e.target.value)}
                   />
                 </div>
-                <div className="toolbar-meta">
-                  Mostrando <strong>{recursosFiltrados.length}</strong> registros desde PostgreSQL
+                <div className="desk-actions">
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    onClick={() => setMostrarFormRecurso(!mostrarFormRecurso)}
+                  >
+                    {mostrarFormRecurso ? "Cerrar Formulario" : "+ Registrar Recurso"}
+                  </button>
                 </div>
               </div>
+
+              {mostrarFormRecurso && (
+                <form className="subform" onSubmit={handleCrearRecurso}>
+                  <div className="field">
+                    <label>Código Recurso</label>
+                    <input
+                      required
+                      value={nuevoRecurso.codigo_recurso}
+                      onChange={(e) => setNuevoRecurso({ ...nuevoRecurso, codigo_recurso: e.target.value })}
+                    />
+                  </div>
+                  <div className="field">
+                    <label>Colección</label>
+                    <select
+                      value={nuevoRecurso.coleccion}
+                      onChange={(e) => setNuevoRecurso({ ...nuevoRecurso, coleccion: e.target.value })}
+                    >
+                      {COLECCIONES.filter((c) => c.id).map((c) => (
+                        <option key={c.id} value={c.id}>{c.nombre}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="field">
+                    <label>Título / Nombre / Equipo</label>
+                    <input
+                      required
+                      value={nuevoRecurso.titulo}
+                      onChange={(e) => setNuevoRecurso({ ...nuevoRecurso, titulo: e.target.value })}
+                      placeholder="Título del recurso"
+                    />
+                  </div>
+                  <div className="field">
+                    <label>ISBN / ISSN</label>
+                    <input
+                      value={nuevoRecurso.isbn_issn}
+                      onChange={(e) => setNuevoRecurso({ ...nuevoRecurso, isbn_issn: e.target.value })}
+                    />
+                  </div>
+                  <div className="field">
+                    <label>Autores / Editorial</label>
+                    <input
+                      value={nuevoRecurso.autores}
+                      onChange={(e) => setNuevoRecurso({ ...nuevoRecurso, autores: e.target.value })}
+                    />
+                  </div>
+                  <div className="field">
+                    <label>Ejemplares</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={nuevoRecurso.cantidad_ejemplares}
+                      onChange={(e) => setNuevoRecurso({ ...nuevoRecurso, cantidad_ejemplares: e.target.value })}
+                    />
+                  </div>
+                  <button type="submit" className="btn-primary">Guardar en Supabase</button>
+                </form>
+              )}
 
               <div className="table-wrap">
                 <table>
@@ -388,6 +553,127 @@ export default function App() {
                             </button>
                           )}
                         </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+
+          {vista === "usuarios" && (
+            <>
+              <div className="panel-toolbar">
+                <div className="filter-group">
+                  <label>Estamento:</label>
+                  <select value={filtroRol} onChange={(e) => setFiltroRol(e.target.value)}>
+                    <option value="">Todos ({usuarios.length})</option>
+                    <option value="ESTUDIANTE">Estudiantes</option>
+                    <option value="PROFESOR">Profesores</option>
+                    <option value="BIBLIOTECARIO">Bibliotecarios</option>
+                  </select>
+                  <input
+                    type="search"
+                    className="search-input"
+                    placeholder="Buscar usuario por identificación, código, nombre o correo..."
+                    value={busquedaUsuario}
+                    onChange={(e) => setBusquedaUsuario(e.target.value)}
+                  />
+                </div>
+                <div className="desk-actions">
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    onClick={() => setMostrarFormUsuario(!mostrarFormUsuario)}
+                  >
+                    {mostrarFormUsuario ? "Cerrar Formulario" : "+ Registrar Usuario"}
+                  </button>
+                </div>
+              </div>
+
+              {mostrarFormUsuario && (
+                <form className="subform" onSubmit={handleCrearUsuario}>
+                  <div className="field">
+                    <label>Rol Institucional</label>
+                    <select
+                      value={nuevoUsuario.rol}
+                      onChange={(e) => setNuevoUsuario({ ...nuevoUsuario, rol: e.target.value })}
+                    >
+                      <option value="ESTUDIANTE">ESTUDIANTE</option>
+                      <option value="PROFESOR">PROFESOR</option>
+                      <option value="BIBLIOTECARIO">BIBLIOTECARIO</option>
+                    </select>
+                  </div>
+                  <div className="field">
+                    <label>Identificación</label>
+                    <input
+                      required
+                      value={nuevoUsuario.identificacion}
+                      onChange={(e) => setNuevoUsuario({ ...nuevoUsuario, identificacion: e.target.value })}
+                    />
+                  </div>
+                  {nuevoUsuario.rol === "ESTUDIANTE" && (
+                    <div className="field">
+                      <label>Código Estudiantil</label>
+                      <input
+                        required
+                        value={nuevoUsuario.codigo}
+                        onChange={(e) => setNuevoUsuario({ ...nuevoUsuario, codigo: e.target.value })}
+                      />
+                    </div>
+                  )}
+                  <div className="field">
+                    <label>Nombres</label>
+                    <input
+                      required
+                      value={nuevoUsuario.nombres}
+                      onChange={(e) => setNuevoUsuario({ ...nuevoUsuario, nombres: e.target.value })}
+                    />
+                  </div>
+                  <div className="field">
+                    <label>Apellidos</label>
+                    <input
+                      required
+                      value={nuevoUsuario.apellidos}
+                      onChange={(e) => setNuevoUsuario({ ...nuevoUsuario, apellidos: e.target.value })}
+                    />
+                  </div>
+                  <div className="field">
+                    <label>Correo Institucional</label>
+                    <input
+                      required
+                      type="email"
+                      value={nuevoUsuario.correo_institucional}
+                      onChange={(e) => setNuevoUsuario({ ...nuevoUsuario, correo_institucional: e.target.value })}
+                    />
+                  </div>
+                  <button type="submit" className="btn-primary">Guardar Usuario</button>
+                </form>
+              )}
+
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Identificación</th>
+                      <th>Código Estudiantil</th>
+                      <th>Apellidos y Nombres</th>
+                      <th>Estamento / Rol</th>
+                      <th>Correo Institucional</th>
+                      <th>Programa Académico / Dependencia</th>
+                      <th>Semestre</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {usuariosFiltrados.map((u) => (
+                      <tr key={u.id}>
+                        <td className="mono">{u.identificacion}</td>
+                        <td className="mono">{u.codigo || "—"}</td>
+                        <td className="row-main">{u.apellidos}, {u.nombres}</td>
+                        <td><span className="role-tag">{u.rol}</span></td>
+                        <td className="mono-sm">{u.correo_institucional}</td>
+                        <td>{u.plan}</td>
+                        <td className="mono">{u.semestre || "—"}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -566,53 +852,6 @@ export default function App() {
                         </tr>
                       ))
                     )}
-                  </tbody>
-                </table>
-              </div>
-            </>
-          )}
-
-          {vista === "usuarios" && (
-            <>
-              <div className="panel-toolbar">
-                <div className="filter-group">
-                  <label>Estamento:</label>
-                  <select value={filtroRol} onChange={(e) => setFiltroRol(e.target.value)}>
-                    <option value="">Todos ({usuarios.length})</option>
-                    <option value="ESTUDIANTE">Estudiantes (50)</option>
-                    <option value="PROFESOR">Profesores (10)</option>
-                    <option value="BIBLIOTECARIO">Bibliotecarios (3)</option>
-                  </select>
-                </div>
-                <div className="toolbar-meta">
-                  Mostrando <strong>{usuariosFiltrados.length}</strong> usuarios registrados en la BD
-                </div>
-              </div>
-              <div className="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Identificación</th>
-                      <th>Código Estudiantil</th>
-                      <th>Apellidos y Nombres</th>
-                      <th>Estamento / Rol</th>
-                      <th>Correo Institucional</th>
-                      <th>Programa Académico / Dependencia</th>
-                      <th>Semestre</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {usuariosFiltrados.map((u) => (
-                      <tr key={u.id}>
-                        <td className="mono">{u.identificacion}</td>
-                        <td className="mono">{u.codigo || "—"}</td>
-                        <td className="row-main">{u.apellidos}, {u.nombres}</td>
-                        <td><span className="role-tag">{u.rol}</span></td>
-                        <td className="mono-sm">{u.correo_institucional}</td>
-                        <td>{u.plan}</td>
-                        <td className="mono">{u.semestre || "—"}</td>
-                      </tr>
-                    ))}
                   </tbody>
                 </table>
               </div>
