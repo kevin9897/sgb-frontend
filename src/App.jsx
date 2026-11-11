@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  calcularMultaAutomatica,
   crearPrestamo,
   crearRecurso,
   crearReserva,
@@ -7,6 +8,8 @@ import {
   darDeBajaRecurso,
   devolverPrestamo,
   ejecutarSeed,
+  eliminarUsuarioLogico,
+  getAuditoria,
   getHealth,
   getMultas,
   getPrestamos,
@@ -36,6 +39,7 @@ export default function App() {
   const [busqueda, setBusqueda] = useState("");
   const [filtroRol, setFiltroRol] = useState("");
   const [busquedaUsuario, setBusquedaUsuario] = useState("");
+  const [verEliminados, setVerEliminados] = useState(false);
 
   const [recursos, setRecursos] = useState([]);
   const [usuarios, setUsuarios] = useState([]);
@@ -43,10 +47,12 @@ export default function App() {
   const [renovaciones, setRenovaciones] = useState([]);
   const [reservas, setReservas] = useState([]);
   const [multas, setMultas] = useState([]);
+  const [auditoria, setAuditoria] = useState([]);
   const [aviso, setAviso] = useState(null);
 
   const [mostrarFormRecurso, setMostrarFormRecurso] = useState(false);
   const [mostrarFormUsuario, setMostrarFormUsuario] = useState(false);
+  const [metodoPago, setMetodoPago] = useState("PSE_SIMULADO");
 
   const [form, setForm] = useState({
     identificacion_usuario: "10000001",
@@ -54,11 +60,18 @@ export default function App() {
     identificacion_bibliotecario: "30000001",
   });
 
+  const [formMulta, setFormMulta] = useState({
+    identificacion_usuario: "10000001",
+    codigo_recurso: "GEN-001",
+    dias_habiles_atraso: 4,
+    identificacion_bibliotecario: "30000001",
+  });
+
   const [nuevoRecurso, setNuevoRecurso] = useState({
-    codigo_recurso: "GEN-021",
+    codigo_recurso: "",
     coleccion: "GENERAL",
     titulo: "",
-    isbn_issn: "978-958-00-0021-1",
+    isbn_issn: "978-958-00-0099-1",
     autores: "",
     editorial: "Madeira Press",
     idioma: "Español",
@@ -82,16 +95,17 @@ export default function App() {
     rol: "ESTUDIANTE",
   });
 
-  const sincronizar = async (col = coleccion) => {
+  const sincronizar = async (col = coleccion, incElim = verEliminados) => {
     try {
-      const [h, rec, usu, pre, ren, res, mul] = await Promise.all([
+      const [h, rec, usu, pre, ren, res, mul, aud] = await Promise.all([
         getHealth(),
-        getRecursos(col),
-        getUsuarios(),
+        getRecursos(col, "", incElim),
+        getUsuarios("", "", incElim),
         getPrestamos(),
         getRenovaciones(),
         getReservas(),
         getMultas(),
+        getAuditoria(),
       ]);
       setHealth(h);
       setRecursos(rec);
@@ -100,14 +114,15 @@ export default function App() {
       setRenovaciones(ren);
       setReservas(res);
       setMultas(mul);
+      setAuditoria(aud);
     } catch (err) {
       setAviso({ tipo: "error", texto: "Sin conexión con el servidor backend: " + err.message });
     }
   };
 
   useEffect(() => {
-    sincronizar(coleccion);
-  }, [coleccion]);
+    sincronizar(coleccion, verEliminados);
+  }, [coleccion, verEliminados]);
 
   const recursosFiltrados = useMemo(() => {
     if (!busqueda.trim()) return recursos;
@@ -141,12 +156,13 @@ export default function App() {
     try {
       const creado = await crearRecurso({
         ...nuevoRecurso,
+        codigo_recurso: nuevoRecurso.codigo_recurso.trim() || null,
         numero_paginas: Number(nuevoRecurso.numero_paginas) || null,
         cantidad_ejemplares: Number(nuevoRecurso.cantidad_ejemplares) || 1,
       });
       setAviso({
         tipo: "ok",
-        texto: `Recurso ${creado.codigo_recurso} (${creado.titulo}) guardado en Supabase PostgreSQL.`,
+        texto: `Recurso ${creado.codigo_recurso} (${creado.titulo}) creado con generador de códigos y auditado en Supabase.`,
       });
       setMostrarFormRecurso(false);
       sincronizar();
@@ -170,6 +186,38 @@ export default function App() {
         texto: `Usuario ${creado.nombres} ${creado.apellidos} (${creado.rol}) registrado en Supabase PostgreSQL.`,
       });
       setMostrarFormUsuario(false);
+      sincronizar();
+    } catch (err) {
+      setAviso({ tipo: "error", texto: err.response?.data?.detail || err.message });
+    }
+  };
+
+  const handleEliminarUsuarioLogico = async (identificacion) => {
+    setAviso(null);
+    try {
+      await eliminarUsuarioLogico(identificacion);
+      setAviso({
+        tipo: "ok",
+        texto: `Borrado lógico aplicado al usuario ${identificacion} (registrado en esquema de auditoría).`,
+      });
+      sincronizar();
+    } catch (err) {
+      setAviso({ tipo: "error", texto: err.response?.data?.detail || err.message });
+    }
+  };
+
+  const handleCalcularMulta = async (e) => {
+    e.preventDefault();
+    setAviso(null);
+    try {
+      const m = await calcularMultaAutomatica({
+        ...formMulta,
+        dias_habiles_atraso: Number(formMulta.dias_habiles_atraso),
+      });
+      setAviso({
+        tipo: "ok",
+        texto: `Multa calculada automáticamente (${m.dias_multa} días hábiles): $${m.valor_cop.toLocaleString("es-CO")} COP asignada a ${m.identificacion_usuario}.`,
+      });
       sincronizar();
     } catch (err) {
       setAviso({ tipo: "error", texto: err.response?.data?.detail || err.message });
@@ -244,14 +292,14 @@ export default function App() {
   };
 
   const handleBaja = async (codigo_recurso) => {
-    const motivo = window.prompt("Detalle el motivo de baja del recurso:", "Deterioro físico irreparable");
+    const motivo = window.prompt("Detalle el motivo de baja lógica del recurso:", "Deterioro físico irreparable");
     if (!motivo) return;
     try {
       await darDeBajaRecurso(codigo_recurso, {
         identificacion_bibliotecario: form.identificacion_bibliotecario,
         motivo,
       });
-      setAviso({ tipo: "ok", texto: `Recurso ${codigo_recurso} dado de baja.` });
+      setAviso({ tipo: "ok", texto: `Recurso ${codigo_recurso} dado de baja lógica y registrado en auditoría.` });
       sincronizar();
     } catch (err) {
       setAviso({ tipo: "error", texto: err.response?.data?.detail || err.message });
@@ -260,8 +308,11 @@ export default function App() {
 
   const handlePagarMulta = async (id) => {
     try {
-      await pagarMulta(id);
-      setAviso({ tipo: "ok", texto: `Pago asentado para la multa #${id}.` });
+      const pagada = await pagarMulta(id, metodoPago);
+      setAviso({
+        tipo: "ok",
+        texto: `Pago simulado exitoso (${pagada.metodo_pago} · Ref: ${pagada.referencia_pago}) para la multa #${id}.`,
+      });
       sincronizar();
     } catch (err) {
       setAviso({ tipo: "error", texto: err.response?.data?.detail || err.message });
@@ -283,7 +334,7 @@ export default function App() {
           </div>
         </div>
 
-        <div className="nav-section">MÓDULOS SPRINT 1 & CIRCULACIÓN</div>
+        <div className="nav-section">MÓDULOS OPERATIVOS</div>
         <nav className="side-nav">
           <button className={vista === "catalogo" ? "active" : ""} onClick={() => setVista("catalogo")}>
             <span>Inventario y Colecciones</span>
@@ -294,20 +345,24 @@ export default function App() {
             <span className="count">{usuarios.length}</span>
           </button>
           <button className={vista === "circulacion" ? "active" : ""} onClick={() => setVista("circulacion")}>
-            <span>Circulación y Préstamos</span>
+            <span>Solicitud y Préstamos</span>
             <span className="count">{prestamos.filter((p) => p.activo).length}</span>
           </button>
           <button className={vista === "reservas" ? "active" : ""} onClick={() => setVista("reservas")}>
-            <span>Cola de Reservas</span>
+            <span>Reserva de Libros</span>
             <span className="count">{reservas.length}</span>
           </button>
           <button className={vista === "renovaciones" ? "active" : ""} onClick={() => setVista("renovaciones")}>
-            <span>Registro de Renovaciones</span>
+            <span>Motor de Renovaciones</span>
             <span className="count">{renovaciones.length}</span>
           </button>
           <button className={vista === "multas" ? "active" : ""} onClick={() => setVista("multas")}>
-            <span>Control de Multas</span>
+            <span>Multas y Pago Simulado</span>
             <span className="count">{multas.length}</span>
+          </button>
+          <button className={vista === "auditoria" ? "active" : ""} onClick={() => setVista("auditoria")}>
+            <span>Esquema de Auditoría</span>
+            <span className="count">{auditoria.length}</span>
           </button>
         </nav>
 
@@ -332,11 +387,12 @@ export default function App() {
           <div>
             <h1>
               {vista === "catalogo" && "Catálogo General de Recursos Bibliográficos"}
-              {vista === "circulacion" && "Gestión de Circulación y Préstamos"}
-              {vista === "reservas" && "Cola de Reservas por Orden de Llegada"}
-              {vista === "renovaciones" && "Bitácora de Renovaciones"}
-              {vista === "multas" && "Liquidación y Control de Multas"}
+              {vista === "circulacion" && "Solicitud y Gestión de Préstamos (HU0005)"}
+              {vista === "reservas" && "Cola de Reserva de Libros y Tabletas (HU0004)"}
+              {vista === "renovaciones" && "Motor de Reglas para Renovaciones por Colección (HT-05)"}
+              {vista === "multas" && "Cálculo Automático de Multas y Pago Simulado (HU0002)"}
               {vista === "usuarios" && "Directorio Institucional de Usuarios"}
+              {vista === "auditoria" && "Esquema de Auditoría y Borrado Lógico (HT-02)"}
             </h1>
             <p className="breadcrumb">
               Biblioteca Central · Conectado a <strong>{health?.database || "Supabase PostgreSQL"}</strong> · Operador:{" "}
@@ -350,16 +406,16 @@ export default function App() {
               <strong>{recursos.filter((r) => r.estado === "DISPONIBLE").length}</strong>
             </div>
             <div>
-              <span className="lbl">USUARIOS BD</span>
-              <strong>{usuarios.length}</strong>
-            </div>
-            <div>
               <span className="lbl">PRÉSTAMOS ACTIVOS</span>
               <strong>{prestamos.filter((p) => p.activo).length}</strong>
             </div>
             <div>
               <span className="lbl">RESERVAS</span>
               <strong>{reservas.length}</strong>
+            </div>
+            <div>
+              <span className="lbl">AUDITORÍA</span>
+              <strong>{auditoria.length}</strong>
             </div>
           </div>
         </header>
@@ -392,9 +448,9 @@ export default function App() {
               />
             </div>
             <div className="desk-actions">
-              <button type="submit" className="btn-primary">Asentar Préstamo</button>
+              <button type="submit" className="btn-primary">Solicitar Préstamo</button>
               <button type="button" className="btn-outline" onClick={ejecutarReserva}>
-                Encolar Reserva
+                Reservar Recurso
               </button>
               <button type="button" className="btn-outline" onClick={handleVerificarSeed}>
                 Verificar Seed Data
@@ -430,6 +486,14 @@ export default function App() {
                     value={busqueda}
                     onChange={(e) => setBusqueda(e.target.value)}
                   />
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={verEliminados}
+                      onChange={(e) => setVerEliminados(e.target.checked)}
+                    />{" "}
+                    Incluir bajas lógicas
+                  </label>
                 </div>
                 <div className="desk-actions">
                   <button
@@ -445,11 +509,11 @@ export default function App() {
               {mostrarFormRecurso && (
                 <form className="subform" onSubmit={handleCrearRecurso}>
                   <div className="field">
-                    <label>Código Recurso</label>
+                    <label>Código (vacío = autogenerar HT-05)</label>
                     <input
-                      required
                       value={nuevoRecurso.codigo_recurso}
                       onChange={(e) => setNuevoRecurso({ ...nuevoRecurso, codigo_recurso: e.target.value })}
+                      placeholder="Autogenerado por colección"
                     />
                   </div>
                   <div className="field">
@@ -538,7 +602,7 @@ export default function App() {
                         </td>
                         <td>
                           <span className={`status-tag ${r.estado}`}>{r.estado}</span>
-                          {r.motivo_baja && <div className="row-sub">Motivo: {r.motivo_baja}</div>}
+                          {r.motivo_baja && <div className="row-sub">Baja lógica: {r.motivo_baja}</div>}
                         </td>
                         <td className="right">
                           <button
@@ -549,7 +613,7 @@ export default function App() {
                           </button>{" "}
                           {r.estado !== "DADO_DE_BAJA" && (
                             <button className="btn-xs danger" onClick={() => handleBaja(r.codigo_recurso)}>
-                              Baja
+                              Baja lógica
                             </button>
                           )}
                         </td>
@@ -662,6 +726,7 @@ export default function App() {
                       <th>Correo Institucional</th>
                       <th>Programa Académico / Dependencia</th>
                       <th>Semestre</th>
+                      <th className="right">Borrado Lógico</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -674,6 +739,18 @@ export default function App() {
                         <td className="mono-sm">{u.correo_institucional}</td>
                         <td>{u.plan}</td>
                         <td className="mono">{u.semestre || "—"}</td>
+                        <td className="right">
+                          {!u.eliminado ? (
+                            <button
+                              className="btn-xs danger"
+                              onClick={() => handleEliminarUsuarioLogico(u.identificacion)}
+                            >
+                              Inactivar
+                            </button>
+                          ) : (
+                            <span className="status-tag DADO_DE_BAJA">INACTIVO</span>
+                          )}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -770,45 +847,13 @@ export default function App() {
           )}
 
           {vista === "renovaciones" && (
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>ID</th>
-                    <th>Código Préstamo</th>
-                    <th>Código Recurso</th>
-                    <th>Usuario</th>
-                    <th>Bibliotecario que renovó</th>
-                    <th>Fecha Renovación</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {renovaciones.length === 0 ? (
-                    <tr><td colSpan="6" className="empty">No se han efectuado renovaciones.</td></tr>
-                  ) : (
-                    renovaciones.map((rn) => (
-                      <tr key={rn.id}>
-                        <td className="mono">#{rn.id}</td>
-                        <td className="mono">{rn.codigo_prestamo}</td>
-                        <td className="mono">{rn.codigo_recurso}</td>
-                        <td className="mono">{rn.identificacion_usuario}</td>
-                        <td className="mono">{rn.identificacion_bibliotecario}</td>
-                        <td className="mono-sm">{new Date(rn.fecha_renovacion).toLocaleString()}</td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-          )}
-
-          {vista === "multas" && (
             <>
               <div className="panel-toolbar">
                 <div className="toolbar-meta">
-                  Tarifario oficial: <strong>1er día hábil: $1.000 COP</strong> ·{" "}
-                  <strong>2º al 7º día: $2.500 COP</strong> ·{" "}
-                  <strong>8º día en adelante: +$100 COP/día adicional</strong>
+                  Reglas por colección (HT-05): <strong>General: 15d / 5 ren</strong> ·{" "}
+                  <strong>Reserva: 5d / 0 ren</strong> · <strong>Referencia: 3d / 2 ren</strong> ·{" "}
+                  <strong>Hemeroteca: 1d / 1 ren</strong> · <strong>Mapoteca: 21h / 0 ren</strong> ·{" "}
+                  <strong>Tecnoteca: 7d / 2 ren</strong>
                 </div>
               </div>
               <div className="table-wrap">
@@ -817,12 +862,94 @@ export default function App() {
                     <tr>
                       <th>ID</th>
                       <th>Código Préstamo</th>
+                      <th>Código Recurso</th>
+                      <th>Usuario</th>
+                      <th>Bibliotecario que renovó</th>
+                      <th>Fecha Renovación</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {renovaciones.length === 0 ? (
+                      <tr><td colSpan="6" className="empty">No se han efectuado renovaciones.</td></tr>
+                    ) : (
+                      renovaciones.map((rn) => (
+                        <tr key={rn.id}>
+                          <td className="mono">#{rn.id}</td>
+                          <td className="mono">{rn.codigo_prestamo}</td>
+                          <td className="mono">{rn.codigo_recurso}</td>
+                          <td className="mono">{rn.identificacion_usuario}</td>
+                          <td className="mono">{rn.identificacion_bibliotecario}</td>
+                          <td className="mono-sm">{new Date(rn.fecha_renovacion).toLocaleString()}</td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+
+          {vista === "multas" && (
+            <>
+              <div className="panel-toolbar">
+                <div className="toolbar-meta">
+                  Tarifario automático (HU0002): <strong>1er día hábil: $1.000 COP</strong> ·{" "}
+                  <strong>2º al 7º día: $2.500 COP</strong> ·{" "}
+                  <strong>8º día+: +$100 COP/día adicional</strong>
+                </div>
+                <div className="filter-group" style={{ justifyContent: "flex-end" }}>
+                  <label>Pasarela Pago Simulado:</label>
+                  <select value={metodoPago} onChange={(e) => setMetodoPago(e.target.value)}>
+                    <option value="PSE_SIMULADO">PSE Institucional Simulado</option>
+                    <option value="TARJETA_SIMULADA">Tarjeta Débito/Crédito Simulada</option>
+                    <option value="CAJA_TESORERIA">Recaudo en Caja Tesorería</option>
+                  </select>
+                </div>
+              </div>
+
+              <form className="subform" onSubmit={handleCalcularMulta}>
+                <div className="desk-title">Simulador de Cálculo Automático de Multa</div>
+                <div className="field">
+                  <label>ID Usuario</label>
+                  <input
+                    required
+                    value={formMulta.identificacion_usuario}
+                    onChange={(e) => setFormMulta({ ...formMulta, identificacion_usuario: e.target.value })}
+                  />
+                </div>
+                <div className="field">
+                  <label>Código Recurso</label>
+                  <input
+                    required
+                    value={formMulta.codigo_recurso}
+                    onChange={(e) => setFormMulta({ ...formMulta, codigo_recurso: e.target.value })}
+                  />
+                </div>
+                <div className="field">
+                  <label>Días hábiles de atraso</label>
+                  <input
+                    type="number"
+                    min="1"
+                    required
+                    value={formMulta.dias_habiles_atraso}
+                    onChange={(e) => setFormMulta({ ...formMulta, dias_habiles_atraso: e.target.value })}
+                  />
+                </div>
+                <button type="submit" className="btn-primary">Calcular y Aplicar Multa</button>
+              </form>
+
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>ID</th>
+                      <th>Código Préstamo</th>
                       <th>Recurso</th>
                       <th>Usuario sancionado</th>
-                      <th>Días hábiles de atraso</th>
+                      <th>Días hábiles</th>
                       <th>Importe (COP)</th>
-                      <th>Estado</th>
-                      <th className="right">Recaudo</th>
+                      <th>Estado / Comprobante</th>
+                      <th className="right">Pago Simulado</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -841,11 +968,16 @@ export default function App() {
                             <span className={`status-tag ${m.pagada ? "DISPONIBLE" : "PERDIDO"}`}>
                               {m.pagada ? "PAZ Y SALVO" : "PENDIENTE DE PAGO"}
                             </span>
+                            {m.referencia_pago && (
+                              <div className="row-sub">
+                                {m.metodo_pago} · Ref: {m.referencia_pago}
+                              </div>
+                            )}
                           </td>
                           <td className="right">
                             {!m.pagada && (
                               <button className="btn-xs primary" onClick={() => handlePagarMulta(m.id)}>
-                                Registrar Pago
+                                Simular Pago
                               </button>
                             )}
                           </td>
@@ -856,6 +988,37 @@ export default function App() {
                 </table>
               </div>
             </>
+          )}
+
+          {vista === "auditoria" && (
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Código Evento</th>
+                    <th>Acción Auditada</th>
+                    <th>Entidad</th>
+                    <th>Código Entidad</th>
+                    <th>Actor</th>
+                    <th>Detalle de la Operación</th>
+                    <th>Fecha y Hora</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {auditoria.map((a) => (
+                    <tr key={a.id}>
+                      <td className="mono">{a.codigo_evento}</td>
+                      <td><span className="role-tag">{a.accion}</span></td>
+                      <td className="mono-sm">{a.entidad}</td>
+                      <td className="mono">{a.entidad_codigo}</td>
+                      <td className="mono">{a.usuario_actor}</td>
+                      <td>{a.detalle}</td>
+                      <td className="mono-sm">{new Date(a.fecha_evento).toLocaleString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
         </main>
       </div>
